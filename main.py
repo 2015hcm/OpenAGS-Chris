@@ -13,6 +13,7 @@ from matplotlib.figure import Figure
 from util import SpectrumParser, binary_search_find_nearest
 from ttkwidgets.autocomplete import AutocompleteCombobox
 from ElementalAnalysis import ElementalAnalysisFrame
+from itertools import chain
 
 class PGAAAnalysisApp(tk.Tk):
     def __init__(self, *args, **kwargs):
@@ -27,7 +28,7 @@ class PGAAAnalysisApp(tk.Tk):
         menuBar = tk.Menu(self, tearoff=0)
         
         fileMenu = tk.Menu(menuBar, tearoff=0)
-        fileMenu.add_command(label="Add File(s)", command = lambda:self.add_files(tk.filedialog.askopenfilenames(initialdir = ".",title = "Select files",filetypes = [("Spectrum files","*.spe")])))
+        fileMenu.add_command(label="Add File(s)", command = lambda:self.add_files(tk.filedialog.askopenfilenames(initialdir = ".",title = "Select files",filetypes = [("Spectrum files","*.spe"), ("Canberra CNF Files","*.cnf")])))
         fileMenu.add_command(label="Remove File(s)", command = self.remove_file_GUI)
         menuBar.add_cascade(label="File",menu=fileMenu)
         
@@ -73,7 +74,6 @@ class PGAAAnalysisApp(tk.Tk):
         toolbarFrame = tk.Frame(self)
         toolbarFrame.grid(row=8,column=0,columnspan=6, sticky="w")
         toolbar = NavigationToolbar2Tk(self.canvas, toolbarFrame)
-        toolbar.children['!button6'].pack_forget()
         toolbar._Spacer()
         self.scaleChangeButton = tk.Button(toolbar, text="LOG", command=self.toggle_y_scale)
         self.scaleChangeButton.pack(side="left")
@@ -81,7 +81,7 @@ class PGAAAnalysisApp(tk.Tk):
         win = tk.Toplevel()
         win.wm_title("Edit ROIs")
         ttk.Label(win, text="Add/Remove Elements of Interest:").grid(row=0,column=0,columnspan=2)
-        elementsList = ['Actinium', 'Aluminum', 'Americium', 'Antimony', 'Argon', 'Arsenic', 'Astatine', 'Barium', 'Berkelium', 'Beryllium', 'Bismuth', 'Bohrium', 'Boron', 'Bromine', 'Cadmium', 'Calcium', 'Californium', 'Carbon', 'Cerium', 'Cesium', 'Chlorine', 'Chromium', 'Cobalt', 'Copper', 'Curium', 'Darmstadtium', 'Dubnium', 'Dysprosium', 'Einsteinium', 'Erbium', 'Europium', 'Fermium', 'Fluorine', 'Francium', 'Gadolinium', 'Gallium', 'Germanium', 'Gold', 'Hafnium', 'Hassium', 'Helium', 'Holmium', 'Hydrogen', 'Indium', 'Iodine', 'Iridium', 'Iron', 'Krypton', 'Lanthanum', 'Lawrencium', 'Lead', 'Lithium', 'Lutetium', 'Magnesium', 'Manganese', 'Meitnerium', 'Mendelevium', 'Mercury', 'Molybdenum', 'Neodymium', 'Neon', 'Neptunium', 'Nickel', 'Niobium', 'Nitrogen', 'Nobelium', 'Oganesson', 'Osmium', 'Oxygen', 'Palladium', 'Phosphorus', 'Platinum', 'Plutonium', 'Polonium', 'Potassium', 'Praseodymium', 'Promethium', 'Protactinium', 'Radium', 'Radon', 'Rhenium', 'Rhodium', 'Roentgenium', 'Rubidium', 'Ruthenium', 'Rutherfordium', 'Samarium', 'Scandium', 'Seaborgium', 'Selenium', 'Silicon', 'Silver', 'Sodium', 'Strontium', 'Sulfur', 'Tantalum', 'Technetium', 'Tellurium', 'Terbium', 'Thallium', 'Thorium', 'Thulium', 'Tin', 'Titanium', 'Tungsten', 'Ununbium', 'Ununhexium', 'Ununpentium', 'Ununquadium', 'Ununseptium', 'Ununtrium', 'Uranium', 'Vanadium', 'Xenon', 'Ytterbium', 'Yttrium', 'Zinc', 'Zirconium']
+        elementsList = list(set(map(lambda x: x[0], self.all_peaks_sens)))
         self.comboValue = tk.StringVar()
         combo = AutocompleteCombobox(win, elementsList, textvariable=self.comboValue)
         combo.grid(row=1,column=0)
@@ -103,6 +103,7 @@ class PGAAAnalysisApp(tk.Tk):
         self.graphEnergies = []
         self.graphCPS = []
         self.selectionList = []
+        self.isotopes = []
         
     def toggle_y_scale(self):
         """Change scale between linear and log"""
@@ -126,23 +127,24 @@ class PGAAAnalysisApp(tk.Tk):
                 self.files.append(trimName)
                 s = SpectrumParser(f)
                 self.fileInfo.append(s.getValues())
-        self.fileSelector.set_menu(self.files[0], *self.files)
-        if updateGraph:
-            self.plotAxes.cla()
-            self.plotAxes.plot(self.fileInfo[0][2], self.fileInfo[0][3])
-            self.canvas.draw()
-            self.currentLivetime.configure(text=str(self.fileInfo[0][0]))
-            self.currentRealtime.configure(text=str(self.fileInfo[0][1]))
-            self.graphEnergies = self.fileInfo[0][2]
-            self.graphCPS = self.fileInfo[0][3]
+        if len(self.files) != 0:
+            self.fileSelector.set_menu(self.files[0], *self.files)
+            if updateGraph:
+                self.plotAxes.cla()
+                self.plotAxes.plot(self.fileInfo[0][2], self.fileInfo[0][3])
+                self.plotAxes.set_xlabel("Energy (kEv)")
+                self.plotAxes.set_ylabel("Counts Per Second")
+                self.canvas.draw()
+                self.currentLivetime.configure(text=str(self.fileInfo[0][0]))
+                self.currentRealtime.configure(text=str(self.fileInfo[0][1]))
+                self.graphEnergies = self.fileInfo[0][2]
+                self.graphCPS = self.fileInfo[0][3]
     def change_file(self, newName: str):
         """Update the graph when we change which file we're looking at"""
         newInd = self.files.index(self.selectedFile.get())
         self.plotAxes.cla()
-        
         self.plotAxes.set_xlabel("Energy (kEv)")
         self.plotAxes.set_ylabel("Counts Per Second")
-        
         if self.scaleChangeButton.cget("text") == "LOG":
             self.plotAxes.set_yscale("linear")
         else:
@@ -159,6 +161,7 @@ class PGAAAnalysisApp(tk.Tk):
             i.remove()
         self.polyFills = []
         for i in range(0, len(fitIndices), 2):
+            #TODO: refind fit indices w/fit energies
             self.polyFills.append(self.plotAxes.fill_between(self.graphEnergies[fitIndices[i]:fitIndices[i+1]],self.graphCPS[fitIndices[i]:fitIndices[i+1]]))
         self.canvas.draw()
     def remove_files(self, win, checkboxValues: list):
@@ -203,35 +206,34 @@ class PGAAAnalysisApp(tk.Tk):
     def edit_ROIs_GUI(self):
         """Open the ROI selection window"""
         self.ROIEditWindow.deiconify()
-    def get_fitting_ranges(self,elementSymbols):
+    def get_fitting_ranges(self,isotopes):
         """Given a list of elements of interest, develops regions of interest around them (these are then modified by the """
         peaksOfInterest = []
         for peak in self.all_peaks_sens:
-            for sym in elementSymbols:
-                if peak[0].startswith(sym):
+            for sym in isotopes:
+                if peak[0] == sym:
                     peaksOfInterest.append(peak)
         peakFittingAreas = []
         for region in peaksOfInterest:
-            radius = 15
-            peakFittingAreas += [float(region[1]) - radius, float(region[1]) + radius]
-        i = 1
-        while i < len(peakFittingAreas)-2:
-            if peakFittingAreas[i] > peakFittingAreas[i+1]:
-                del peakFittingAreas[i]
-                del peakFittingAreas[i]
-            else:
-                i+=2 
+            radius = 3
+            peakFittingAreas.append([[region[0]],float(region[1]) - radius, float(region[1]) + radius])
+        i = 0
+        while i < len(peakFittingAreas) - 1:
+            if peakFittingAreas[i][2] > peakFittingAreas[i+1][1]:
+                peakFittingAreas[i] = [peakFittingAreas[i][0]+peakFittingAreas[i+1][0], peakFittingAreas[i][1], peakFittingAreas[i+1][2]] 
+                del peakFittingAreas[i+1]
+            i += 1
         return peakFittingAreas
     def edit_ROIs(self):
         """Edit ROIs for the program when submitted from ROI edit window"""
         self.ROIEditWindow.withdraw()
-        elementMap = {'Hydrogen': 'H', 'Helium': 'He', 'Lithium': 'Li', 'Beryllium': 'Be', 'Boron': 'B', 'Carbon': 'C', 'Nitrogen': 'N', 'Oxygen': 'O', 'Fluorine': 'F', 'Neon': 'Ne', 'Sodium': 'Na', 'Magnesium': 'Mg', 'Aluminum': 'Al', 'Silicon': 'Si', 'Phosphorus': 'P', 'Sulfur': 'S', 'Chlorine': 'Cl', 'Argon': 'Ar', 'Potassium': 'K', 'Calcium': 'Ca', 'Scandium': 'Sc', 'Titanium': 'Ti', 'Vanadium': 'V', 'Chromium': 'Cr', 'Manganese': 'Mn', 'Iron': 'Fe', 'Cobalt': 'Co', 'Nickel': 'Ni', 'Copper': 'Cu', 'Zinc': 'Zn', 'Gallium': 'Ga', 'Germanium': 'Ge', 'Arsenic': 'As', 'Selenium': 'Se', 'Bromine': 'Br', 'Krypton': 'Kr', 'Rubidium': 'Rb', 'Strontium': 'Sr', 'Yttrium': 'Y', 'Zirconium': 'Zr', 'Niobium': 'Nb', 'Molybdenum': 'Mo', 'Technetium': 'Tc', 'Ruthenium': 'Ru', 'Rhodium': 'Rh', 'Palladium': 'Pd', 'Silver': 'Ag', 'Cadmium': 'Cd', 'Indium': 'In', 'Tin': 'Sn', 'Antimony': 'Sb', 'Tellurium': 'Te', 'Iodine': 'I', 'Xenon': 'Xe', 'Caesium': 'Cs', 'Barium': 'Ba', 'Lanthanum': 'La', 'Cerium': 'Ce', 'Praseodymium': 'Pr', 'Neodymium': 'Nd', 'Promethium': 'Pm', 'Samarium': 'Sm', 'Europium': 'Eu', 'Gadolinium': 'Gd', 'Terbium': 'Tb', 'Dysprosium': 'Dy', 'Holmium': 'Ho', 'Erbium': 'Er', 'Thulium': 'Tm', 'Ytterbium': 'Yb', 'Lutetium': 'Lu', 'Hafnium': 'Hf', 'Tantalum': 'Ta', 'Tungsten': 'W', 'Rhenium': 'Re', 'Osmium': 'Os', 'Iridium': 'Ir', 'Platinum': 'Pt', 'Gold': 'Au', 'Mercury': 'Hg', 'Thallium': 'Tl', 'Lead': 'Pb', 'Bismuth': 'Bi', 'Polonium': 'Po', 'Astatine': 'At', 'Radon': 'Rn', 'Francium': 'Fr', 'Radium': 'Ra', 'Actinium': 'Ac', 'Thorium': 'Th', 'Protactinium': 'Pa', 'Uranium': 'U', 'Neptunium': 'Np', 'Plutonium': 'Pu', 'Americium': 'Am', 'Curium': 'Cm', 'Berkelium': 'Bk', 'Californium': 'Cf', 'Einsteinium': 'Es', 'Fermium': 'Fm', 'Mendelevium': 'Md', 'Nobelium': 'No', 'Lawrencium': 'Lr', 'Rutherfordium': 'Rf', 'Dubnium': 'Db', 'Seaborgium': 'Sg', 'Bohrium': 'Bh', 'Hassium': 'Hs', 'Meitnerium': 'Mt', 'Darmstadtium': 'Ds', 'Roentgenium': 'Rg', 'Copernicium': 'Cn', 'Ununtrium': 'Uut', 'Flerovium': 'Fl', 'Ununpentium': 'Uup', 'Livermorium': 'Lv', 'Ununseptium': 'Uus', 'Ununoctium': 'Uuo'}
-        self.elementSymbols = [elementMap[e] for e in self.elements]
-        fitRanges = self.get_fitting_ranges(self.elementSymbols)
+        self.isotopes = self.elements
+        fitRanges = self.get_fitting_ranges(self.elements)
         self.fitRanges = fitRanges
         if len(self.graphEnergies) > 0:
             l = lambda x:binary_search_find_nearest(self.graphEnergies, x)
-            fitIndices = list(map(l, fitRanges))
+            fitIndices = [[l(p[1]), l(p[2])] for p in fitRanges]
+            fitIndices = list(chain.from_iterable(fitIndices))
             self.fitIndices = fitIndices
             for i in self.polyFills:
                 i.remove()
@@ -241,16 +243,14 @@ class PGAAAnalysisApp(tk.Tk):
             self.canvas.draw()
     def add_element(self, win, i, ele):
         """Add an element to the ROI select GUI"""
-        elementsList = ['Actinium', 'Aluminum', 'Americium', 'Antimony', 'Argon', 'Arsenic', 'Astatine', 'Barium', 'Berkelium', 'Beryllium', 'Bismuth', 'Bohrium', 'Boron', 'Bromine', 'Cadmium', 'Calcium', 'Californium', 'Carbon', 'Cerium', 'Cesium', 'Chlorine', 'Chromium', 'Cobalt', 'Copper', 'Curium', 'Darmstadtium', 'Dubnium', 'Dysprosium', 'Einsteinium', 'Erbium', 'Europium', 'Fermium', 'Fluorine', 'Francium', 'Gadolinium', 'Gallium', 'Germanium', 'Gold', 'Hafnium', 'Hassium', 'Helium', 'Holmium', 'Hydrogen', 'Indium', 'Iodine', 'Iridium', 'Iron', 'Krypton', 'Lanthanum', 'Lawrencium', 'Lead', 'Lithium', 'Lutetium', 'Magnesium', 'Manganese', 'Meitnerium', 'Mendelevium', 'Mercury', 'Molybdenum', 'Neodymium', 'Neon', 'Neptunium', 'Nickel', 'Niobium', 'Nitrogen', 'Nobelium', 'Oganesson', 'Osmium', 'Oxygen', 'Palladium', 'Phosphorus', 'Platinum', 'Plutonium', 'Polonium', 'Potassium', 'Praseodymium', 'Promethium', 'Protactinium', 'Radium', 'Radon', 'Rhenium', 'Rhodium', 'Roentgenium', 'Rubidium', 'Ruthenium', 'Rutherfordium', 'Samarium', 'Scandium', 'Seaborgium', 'Selenium', 'Silicon', 'Silver', 'Sodium', 'Strontium', 'Sulfur', 'Tantalum', 'Technetium', 'Tellurium', 'Terbium', 'Thallium', 'Thorium', 'Thulium', 'Tin', 'Titanium', 'Tungsten', 'Ununbium', 'Ununhexium', 'Ununpentium', 'Ununquadium', 'Ununseptium', 'Ununtrium', 'Uranium', 'Vanadium', 'Xenon', 'Ytterbium', 'Yttrium', 'Zinc', 'Zirconium']
-        
+        elementsList = set(map(lambda x: x[0], self.all_peaks_sens))        
         if ele in self.elements or ele not in elementsList:
             return None
         else:
             self.elements.append(ele)
             tmpLbl = ttk.Label(win, text=ele)
             tmpLbl.grid(row=i,column=0)
-            self.eleLabelList.append(tmpLbl)
-            
+            self.eleLabelList.append(tmpLbl)            
             tmpBtn = ttk.Button(win, text="Remove", command = lambda x=i:self.remove_element(x))
             tmpBtn.grid(row=i, column=1)
             self.removeBtnList.append(tmpBtn)
@@ -265,6 +265,7 @@ class PGAAAnalysisApp(tk.Tk):
             self.eleLabelList[j].configure(text=self.eleLabelList[j+1].cget("text"))
         self.eleLabelList[-1].destroy()
         self.eleLabelList = self.eleLabelList[:-1]
+        self.elementIndex -= 1
     def ROIZoomGUI(self):
         """Setup UI for "Zoom to ROI" Functionality"""
         if len(self.fitIndices) == 0:
@@ -278,10 +279,9 @@ class PGAAAnalysisApp(tk.Tk):
         listToSelect = []
         
         for j in range(0, len(self.fitIndices), 2):
-            left = self.fitRanges[j]
-            right = self.fitRanges[j+1]
+            iso, left, right = self.fitRanges[j//2]
             listToSelect.append([left, right, max(self.graphCPS[self.fitIndices[j]:self.fitIndices[j+1]])])
-            ttk.Radiobutton(win, text="ROI #"+str(i)+": "+str(left)+"-"+str(right), variable=val, value=i).grid(row=i,column=0,columnspan=2)
+            ttk.Radiobutton(win, text=",".join(iso)+": "+str(left)+" keV - "+str(right) + " keV", variable=val, value=i).grid(row=i,column=0,columnspan=2)
             i += 1
             
         ttk.Button(win, text="Zoom", command=lambda:self.zoom_to_roi(win,*listToSelect[val.get()-1])).grid(row=i,column=0)
@@ -294,6 +294,9 @@ class PGAAAnalysisApp(tk.Tk):
         self.canvas.draw()
     def side_to_side_GUI(self):
         """Side-by-side view GUI"""
+        if len(self.files) < 2:
+            tk.messagebox.showinfo("Add Files", "You need to have 2 or more files to use this!")
+            return None
         win = tk.Toplevel()
         win.wm_title("Side-By-Side View")
         f = tk.Frame(win)
@@ -301,7 +304,7 @@ class PGAAAnalysisApp(tk.Tk):
         f1Select = tk.StringVar()
         f2Select = tk.StringVar()
         stackGraphs = tk.IntVar()
-        compRegionsList = ["Current Bounds", "All Data"] + ["ROI: " + str(self.fitRanges[j]) + "-" + str(self.fitRanges[j+1]) for j in range(0, len(self.fitRanges), 2)]
+        compRegionsList = ["Current Bounds", "All Data"] + [','.join(iso)+": " + str(left) + "-" + str(right) for iso, left, right in self.fitRanges]
         ttk.Label(f,text="Select Area to Compare").grid(row=0,column=0)
         ttk.OptionMenu(f,regionSelect, compRegionsList[0], *compRegionsList).grid(row=1,column=0)
         ttk.Label(f,text="Select First File").grid(row=2,column=0)
@@ -315,7 +318,8 @@ class PGAAAnalysisApp(tk.Tk):
     def show_side_to_side(self, fname1, fname2, area, xlim, stacked, win, f):
         """Side-by-side Graph Creator"""
         if fname1 == "" or fname2 == "" or fname1 == fname2:
-            return None #TODO add proper error messages
+            tk.messagebox.showinfo("Bad Input","Please add 2 distinct files for comaprison")
+            return None
         fig = Figure(figsize=(10,5), dpi=100)
         f1Ind = self.files.index(fname1)
         f1Ener = self.fileInfo[f1Ind][2]
@@ -430,7 +434,7 @@ class PGAAAnalysisApp(tk.Tk):
         
     def run_analysis(self, win, otherFrame):
         """Actually run the elemental analysis"""
-        if len(self.elementSymbols) == 0:
+        if len(self.isotopes) == 0:
             tk.messagebox.showinfo("Please add ROIs", "You have not added any elements of interest. Use the edit button to add some.")
             return None
         fnames = []
@@ -448,8 +452,10 @@ class PGAAAnalysisApp(tk.Tk):
         otherFrame.destroy()
         e = ElementalAnalysisFrame(win)
         e.grid(row=0,column=0)
-        tmpRanges = [[self.fitRanges[i],self.fitRanges[i+1]] for i in range(0, len(self.fitRanges),2)]
-        e.add_all_data(fnames, fInfo, tmpRanges, self.elementSymbols, self.all_peaks_sens)
+        tmpRanges = [[i,j] for _,i,j in self.fitRanges]
+        e.add_all_data(fnames, fInfo, tmpRanges, self.isotopes, self.all_peaks_sens)
+        win.protocol("WM_DELETE_WINDOW", e.clean_close)
+        self.protocol("WM_DELETE_WINDOW", e.clean_close_all)
         e.run_analysis()
     def decomposition_analysis_GUI(self):
         """Unfinished"""

@@ -4,7 +4,7 @@ Created on Tue Jun 16 12:47:15 2020
 
 @author: chris
 """
-from tkinter import *
+from tkinter import Frame, DoubleVar, StringVar, IntVar, Checkbutton, Spinbox, messagebox, filedialog
 from tkinter.ttk import Button, Entry, Label, OptionMenu
 import os, math
 from util import var_mul, binary_search_find_nearest, binary_search_buried
@@ -35,13 +35,18 @@ class ReviewFitPage(Frame):
         integrateButton.grid(row=5,column=7)
         acceptButton = Button(self, text="Fit looks good, let the program continue", command=self.submit)
         acceptButton.grid(row=6,column=6)
-        ignoreButton = Button(self, text="Ignore this data")
+        ignoreButton = Button(self, text="Ignore this data", command = lambda:self.controller.peakCounter.set(self.controller.peakCounter.get()+1))
         ignoreButton.grid(row=6,column=7)
         self.KnownPeaksFrame = Frame(self)
         Label(self.KnownPeaksFrame, text="Peak Information (Center, Amplitude, Width)").grid(row=0, column=0, columnspan=2)
+        
         self.newPeakEntry = Entry(self.KnownPeaksFrame)
         self.newPeakEntry.grid(row=1,column=0)
-        Button(self.KnownPeaksFrame, text="Add", command=lambda:self.add_peak(float(self.newPeakEntry.get()))).grid(row=1,column=1)
+        self.newPeakEntry.insert(0,"Enter Peak Energy")
+        self.newPeakEntry.bind("<FocusIn>",self.clear_new_entry)
+        
+        Button(self.KnownPeaksFrame, text="Add", command=lambda:self.add_peak(self.newPeakEntry.get())).grid(row=1,column=1)
+        
         self.KnownPeaksFrame.grid(row=3,column=6, columnspan=2)
         Button(self, text="Reanalyze", command=self.reanalyze).grid(row=4,column=6,columnspan=2)
         self.energies = []
@@ -56,45 +61,48 @@ class ReviewFitPage(Frame):
     def populate_values(self, startInd, endInd, peaks, variances):
         self.a.cla()
         self.startInd = startInd
-        self.ctrs = np.array(peaks[2::3])
-        self.amps = np.array(peaks[3::3])
-        self.wids = np.array(peaks[4::3])
-        self.slope = peaks[0]
-        self.intercept = peaks[1]
-        poss = chain.from_iterable(self.get_possibilites(True))
-        poss = list(k for k,_ in groupby(poss))
-        self.peaks = list(peaks[2:])
         self.energies = self.controller.file1Energies[startInd-20:endInd+21]
         self.cps = self.controller.file1CPS[startInd-20:endInd+21]
         self.variances = list(variances)
+        if len(peaks) > 0:
+            self.ctrs = np.array(peaks[2::3])
+            self.amps = np.array(peaks[3::3])
+            self.wids = np.array(peaks[4::3])
+            self.slope = peaks[0]
+            self.intercept = peaks[1]
+            poss = chain.from_iterable(self.get_possibilites(True))
+            poss = list(k for k,_ in groupby(poss))
+            self.peaks = list(peaks[2:])
+            fitX = np.arange(self.energies[20],self.energies[-20],.01)
+            self.fitX = fitX
+            backgroundY = fitX * peaks[0] + np.array([peaks[1]]*len(fitX))
+            self.backgroundY = backgroundY
+            fitY = self.controller.multiple_gaussian_and_secant(fitX,*peaks)
+            self.a.plot(fitX, fitY, "r-", label = "Fit")
+            fullAmps = self.amps + (peaks[0] * self.ctrs + peaks[1]) 
+            self.peakPoints = self.a.plot(self.ctrs, fullAmps,"go",label="Found Peaks",picker=6)[0]
+            self.peakPoints.set_pickradius(10)
+            self.backgroundLine = self.a.plot(fitX,backgroundY,"k-", label = "Background")
+            self.f.canvas.mpl_connect('motion_notify_event', self.on_plot_hover)
         self.a.plot(self.energies, self.cps,"bo", label="Observed Data")
-        fitX = np.arange(self.energies[20],self.energies[-20],.01)
-        self.fitX = fitX
-        backgroundY = fitX * peaks[0] + np.array([peaks[1]]*len(fitX))
-        self.backgroundY = backgroundY
-        fitY = self.controller.multiple_gaussian_and_secant(fitX,*peaks)
-        self.a.plot(fitX, fitY, "r-", label = "Fit")
-        fullAmps = self.amps + (peaks[0] * self.ctrs + peaks[1]) 
-        self.peakPoints = self.a.plot(self.ctrs, fullAmps,"go",label="Found Peaks",picker=6)[0]
-        self.peakPoints.set_pickradius(10)
-        self.backgroundLine = self.a.plot(fitX,backgroundY,"k-", label = "Background")
         self.a.set_xlim(self.energies[20],self.energies[-20])
         self.canvas = FigureCanvasTkAgg(self.f, self)
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(row=1,column=0,columnspan=6, rowspan=6)
-        for i in poss:
-            pass
         self.a.legend(loc='upper right', prop={'size': 8})
         toolbarFrame = Frame(self)
         toolbarFrame.grid(row=7,column=0,columnspan=6, sticky="w")
         toolbar = NavigationToolbar2Tk(self.canvas, toolbarFrame)
-        self.f.canvas.mpl_connect('motion_notify_event', self.on_plot_hover)
         self.spinboxLeftVal = DoubleVar()
         self.spinboxLeft = Spinbox(self, values=self.energies[:-20], command = self.update_right, textvariable = self.spinboxLeftVal)
+        self.spinboxLeft.bind("<Return>",lambda x:self.update_right())
+        self.spinboxLeft.bind("<FocusOut>",lambda x:self.update_right())
         self.spinboxLeftVal.set(self.energies[20])
         self.spinboxLeft.grid(row=2,column=6)
         self.spinboxRightVal = DoubleVar()
         self.spinboxRight = Spinbox(self, values = self.energies[21:], command = self.update_left, textvariable = self.spinboxRightVal)
+        self.spinboxRight.bind("<Return>",lambda x:self.update_left())
+        self.spinboxRight.bind("<FocusOut>",lambda x:self.update_left())
         self.spinboxRightVal.set(self.energies[-20])
         self.spinboxRight.grid(row=2,column=7)
         for i in self.peakGUIList:
@@ -114,8 +122,11 @@ class ReviewFitPage(Frame):
         self.removeBtns[-1].destroy()
         del self.removeBtns[-1]
     def add_peak(self, loc):
-        self.newPeakEntry.delete(0,"end")
-        self.newPeakEntry.insert(0,"")
+        try:
+            loc = float(loc)
+        except ValueError:
+            return None
+        self.reset_new_entry()
         i=0
         while self.energies[i] < loc:
             i += 1
@@ -138,18 +149,26 @@ class ReviewFitPage(Frame):
     #TODO: add manual entry flag, and call it with a keybind from the spinboxes
     def update_left(self):
         temp = self.spinboxLeftVal.get()
+        if self.spinboxRightVal.get() > self.energies[-1]:
+            messagebox.showinfo("Out of Bounds","Please enter an X value within the currently plotted points")
+            self.spinboxRightVal.set(self.energies[-20])
+            return None
         try:
             newRange = self.energies[:np.where(self.energies==self.spinboxRightVal.get())[0][0]]
         except IndexError:
-            newRange = self.energies[binary_search_find_nearest(self.energies, self.spinboxRightVal.get())]
+            newRange = self.energies[:binary_search_find_nearest(self.energies, self.spinboxRightVal.get())]
         self.spinboxLeft.configure(values=newRange)
         self.spinboxLeftVal.set(temp)
     def update_right(self):
         temp = self.spinboxRightVal.get()
+        if self.spinboxLeftVal.get() < self.energies[0]:
+            messagebox.showinfo("Out of Bounds","Please enter an X value within the currently plotted points")
+            self.spinboxLeftVal.set(self.energies[20])
+            return None
         try:
             newRange = self.energies[np.where(self.energies==self.spinboxLeftVal.get())[0][0]+1:]
         except IndexError:
-            newRange = self.energies[binary_search_find_nearest(self.energies, self.spinboxLeftVal.get())]
+            newRange = self.energies[binary_search_find_nearest(self.energies, self.spinboxLeftVal.get()):]
         self.spinboxRight.configure(values=newRange)
         self.spinboxRightVal.set(temp)
     def reanalyze(self):
@@ -162,18 +181,36 @@ class ReviewFitPage(Frame):
         guesses = [[float(j) for j in i.cget("text").split(", ")] for i in self.peakGUIList]
         guesses = list(chain.from_iterable(guesses))
         guesses = [self.slope, self.intercept] + guesses
-        popt, pcov = curve_fit(self.controller.multiple_gaussian_and_secant, xdata = self.energies[lowIndex:highIndex], ydata = self.cps[lowIndex:highIndex], p0 = np.array(guesses))
-        self.populate_values(self.startInd - 20 + lowIndex, self.startInd - 20 + highIndex, popt, np.diag(pcov)[2:])
-    
+        try:
+            popt, pcov = curve_fit(self.controller.multiple_gaussian_and_secant, xdata = self.energies[lowIndex:highIndex], ydata = self.cps[lowIndex:highIndex], p0 = np.array(guesses))
+            self.populate_values(self.startInd - 20 + lowIndex, self.startInd - 20 + highIndex, popt, np.diag(pcov)[2:])
+        except RuntimeError:
+            messagebox.showwarning("No fit found", "No good peak fit could be determined. Try entering fewer centroids.")
+        
+    def clear_new_entry(self, _):
+        self.newPeakEntry.delete(0,"end")
+    def reset_new_entry(self):
+        self.newPeakEntry.delete(0,"end")
+        self.newPeakEntry.insert(0,"Enter Peak Energy")
     def get_possibilites(self, MP):
         if MP:#Multiple peaks
             return [self.controller.get_possibilites_list(c) for c in self.ctrs]
         else:
             return self.controller.get_possibilites_list((self.energies[20]+self.energies[-20])/2)
     def send_to_mi(self):
-        cpsNoBgd = [j - (self.energies[i] * self.slope + self.intercept) for i,j in enumerate(self.cps)]
+        #TODO: get left and right selectors
+        try:
+            left = float(self.spinboxLeftVal.get())
+            right = float(self.spinboxRightVal.get())
+        except ValueError:
+            messagebox.showinfo("Bad Input","Please enter in-range floating point numbers for the bounds.")
+        if left < self.energies[0] or right > self.energies[-1]:
+            messagebox.showinfo("Bad Input","Please enter in-range floating point numbers for the bounds.")
+            return None
+        r = binary_search_find_nearest(self.energies, right)
+        l = binary_search_find_nearest(self.energies, left)
         self.controller.show_frame(ManualIntegrationPage)
-        self.controller.frames[ManualIntegrationPage].populate_values(self.energies[20:-20], cpsNoBgd[20:-20])
+        self.controller.frames[ManualIntegrationPage].populate_values(self.energies[l:r], self.cps[l:r])
         self.controller.frames[ManualIntegrationPage].add_peak_selector(self.get_possibilites(False))
         
     def send_to_mes(self):
@@ -335,18 +372,20 @@ class ManualElementSelect(Frame):
             widVar = usedVars[i+2]
             mass = amp * abs(wid) * math.sqrt(2*math.pi) / float(usedPoss[i//3][2])
             massDev = math.sqrt(var_mul(amp, ampVar, wid, widVar)) * math.sqrt(2*math.pi) / float(usedPoss[i//3][2])
-            toReturn.append([usedPoss[i//3][0], [ctr, amp, wid], float(usedPoss[i//3][1]), float(usedPoss[i//3][2]), mass, massDev])
+            toReturn.append([usedPoss[i//3][0], [ctr, amp, wid, amp*wid*math.sqrt(2*math.pi)], float(usedPoss[i//3][1]), float(usedPoss[i//3][2]), mass, massDev])
         self.controller.add_ms_peaks(toReturn)
         self.controller.increment_peak_counter()
         
 class ResultsViewer(Frame):
     def __init__(self, parent):
         Frame.__init__(self,parent)
+        self.parent=parent
         self.header = Label(self, text="Results by File", font=("Arial",14,"bold"))
         self.header.grid(row=0,column=0,columnspan=3)
         self.currentRow = 1
     def display_file_results(self,fname,results):
-        pass
+        self.parent.show_frame(SingleFileViewer)
+        self.parent.frames[SingleFileViewer].display_file_results(fname, results)
     def export_all_data(self,filesDict):
         fname = filedialog.asksaveasfilename(initialdir = ".",title = "Select export file",filetypes = [("CSV files","*.csv")])
         if fname[-4:] != ".csv":
@@ -355,22 +394,22 @@ class ResultsViewer(Frame):
         for f in filesDict.keys():
             exportFile.write(f+"\n")
             exportFile.write("Peaks Used for Mass Calculations:\n")
-            exportFile.write("Element, Theorhetical Peak Energy, Observed Peak Energy, Peak Height, Peak Width, Peak Sensitivity, Predicted Mass (mg), Std. Dev. (mg)\n")
+            exportFile.write("Element, Theorhetical Peak Energy, Observed Peak Energy, Peak Height, Peak Width, Peak Area, Peak Sensitivity, Predicted Mass (mg), Std. Dev. (mg)\n")
             for element in filesDict[f][0].keys():
                 exportFile.write(element+",")
                 for peak in filesDict[f][0][element]:
-                    outList = [peak[1]] + list(peak[0][:3]) + list(peak[2:])
+                    outList = [peak[1]] + list(peak[0][:4]) + list(peak[2:])
                     exportFile.write(','.join([str(i) for i in outList])+"\n,")
                 exportFile.seek(exportFile.tell() - 1, os.SEEK_SET)  #Don't indent the next element
             exportFile.write("Disregarded Peaks:\n")
-            exportFile.write("Observed Peak Energy, Peak Height, Peak Width, Closest Element, Element's Peak Center, Element Sensitivity, Predicted Mass (mg), Std. Dev. (mg)\n")
+            exportFile.write("Observed Peak Energy, Peak Height, Peak Width, Peak Area, Closest Element, Element's Peak Center, Element Sensitivity, Predicted Mass (mg), Std. Dev. (mg)\n")
             for element in filesDict[f][2].keys():
                 for peak in filesDict[f][2][element]:
-                    outList = list(peak[0][:3]) + [element] + list(peak[1:])
+                    outList = list(peak[0][:4]) + [element] + list(peak[1:])
                     exportFile.write(','.join([str(i) for i in outList])+"\n")
                 exportFile.seek(exportFile.tell() - 1, os.SEEK_SET)  #Don't indent the next element
             exportFile.write("Masses Calculated:"+"\n")
-            exportFile.write("Element, Predicted Mass (mg), Std. Dev. (mg), Predicted Mass (mol), Std. Dev. (mol)\n")
+            exportFile.write("Element, Predicted Mass (mg), Std. Dev. (mg), Number of Atoms (mol), Std. Dev. (mol)\n")
             for element in filesDict[f][1].keys():
                 exportFile.write(element + ',' + ','.join([str(i) for i in filesDict[f][1][element]])+"\n")
             exportFile.write("\n\n")
@@ -379,20 +418,50 @@ class ResultsViewer(Frame):
         for f in filesDict.keys():
             fileLabel = Label(self, text=f)
             fileLabel.grid(row=self.currentRow,column=0)
-            showButton = Button(self, text = "Show", command=lambda:self.display_file_results(f,filesDict[f]))
+            showButton = Button(self, text = "Show", command=lambda tmp=f:self.display_file_results(tmp,filesDict[tmp]))
             showButton.grid(row=self.currentRow,column=1)
             self.currentRow += 1
         exportAllButton = Button(self, text="Export All Data", command=lambda:self.export_all_data(filesDict))
         exportAllButton.grid(row=self.currentRow, column=0,columnspan=2)
-"""class SingleFileViewer(Frame):
-    def __init__(self, parent, controller):
+class SingleFileViewer(Frame):
+    def __init__(self, parent):
         Frame.__init__(self,parent)
+        self.parent=parent
         self.currentRow = 0
-    def display_file_results(self,fname,results):"""
-
-
+    
+    def write_row(self, itemsList):
+        for i in range(len(itemsList)):
+            Label(self, text=str(itemsList[i]), borderwidth=4, relief="solid").grid(row=self.currentRow, column=i, sticky="nsew")
+        self.currentRow += 1
         
-
+    def display_file_results(self,fname, results):
+        self.currentRow = 0
+        Button(self, text="Back",command=self.go_back).grid(row=1000,column=0)
+        Label(self, text=fname,font=("Arial",14)).grid(row=0,column=0,columnspan=8)
+        Label(self, text="Peaks Used for Mass Calculations:").grid(row=1,column=0, columnspan=2, pady=(20,0), sticky="w")
+        self.currentRow = 2
+        self.write_row(['Element', 'Theorhetical Peak Energy', 'Observed Peak Energy', 'Peak Height', 'Peak Width', 'Peak Area','Peak Sensitivity', 'Predicted Mass (mg)', 'Std. Dev. (mg)'])
+        for element in results[0].keys():
+            for peak in results[0][element]:
+                outList = [element, peak[1]] + list(peak[0][:4]) + list(peak[2:])
+                self.write_row(outList)
+        Label(self, text="Disregarded Peaks:").grid(row=self.currentRow,column=0, columnspan=2, pady=(20,0), sticky="w") 
+        self.currentRow += 1
+        self.write_row(['Observed Peak Energy', 'Peak Height', 'Peak Width', 'Peak Area','Closest Element', "Element's Peak Center", 'Element Sensitivity', 'Predicted Mass (mg)', 'Std. Dev. (mg)'])
+        for element in results[2].keys():
+            for peak in results[2][element]:
+                outList = list(peak[0][:4]) + [element] + list(peak[1:])
+                self.write_row(outList)
+        Label(self, text="Masses Calculated:").grid(row=self.currentRow,column=0, columnspan=2, pady=(20,0), sticky="w") 
+        self.currentRow += 1
+        self.write_row(['Element', 'Predicted Mass (mg)', 'Std. Dev. (mg)', 'Number of Atoms (mol)', 'Std. Dev. (mol)'])
+        for element in results[1].keys():
+            self.write_row([element]+results[1][element])
+            
+    def go_back(self):
+        for c in self.winfo_children():
+            c.destroy()
+        self.parent.show_frame(ResultsViewer)
 class BaseFileSelectorFrame(Frame):
     def __init__(self, parent, files):
         Frame.__init__(self, parent)
