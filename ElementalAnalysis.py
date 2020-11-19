@@ -5,11 +5,12 @@ Created on Fri Jul 17 10:41:44 2020
 @author: chris
 """
 import tkinter as tk
-from pages import ManualIntegrationPage, ReviewFitPage, ManualElementSelect, ResultsViewer
+from pages import ManualIntegrationPage, ReviewFitPage, ManualElementSelect, ResultsViewer, SingleFileViewer
 import numpy as np
 import copy, math
 from util import peakdet, binary_search_find_nearest, var_mul
 from scipy.optimize import curve_fit
+from scipy.signal import find_peaks_cwt
 class ElementalAnalysisFrame(tk.Frame):
     def __init__(self, parent):
         tk.Frame.__init__(self,parent)
@@ -24,12 +25,22 @@ class ElementalAnalysisFrame(tk.Frame):
         """
         self.manualChoices = []
         self.frames = {}
-        for F in (ResultsViewer, ManualIntegrationPage, ReviewFitPage, ManualElementSelect):
+        for F in (ResultsViewer, ManualIntegrationPage, ReviewFitPage, ManualElementSelect, SingleFileViewer):
             frame = F(self)
             self.frames[F] = frame
             frame.grid(row=0, column=0, sticky="nsew")
         self.show_frame(ReviewFitPage)
         self.filesDict = dict()
+    def clean_close(self):
+        self.peakCounter.set(len(self.fitRegions))
+        p = self.parent.master
+        self.parent.destroy()
+        p.protocol("WM_DELETE_WINDOW", p.destroy)
+    def clean_close_all(self):
+        self.peakCounter.set(len(self.fitRegions))
+        p = self.parent.master
+        self.parent.destroy()
+        p.destroy()
     def add_all_data(self, filesList, fileInfo, ROIs, targets, reference):
         self.filesList = filesList
         self.fileInfo = fileInfo
@@ -66,9 +77,9 @@ class ElementalAnalysisFrame(tk.Frame):
         mass = area/float(peak[2])
         massStdev = areaStdev/float(peak[2])
         if peak[0] not in self.manualAnalysisResults["D"].keys():
-            self.manualAnalysisResults["D"][peak[0]] = [(["MI","MI","MI"], float(peak[1]), float(peak[2]), mass, massStdev)]
+            self.manualAnalysisResults["D"][peak[0]] = [(["MI","MI","MI", area], float(peak[1]), float(peak[2]), mass, massStdev)]
         else:
-            self.manualAnalysisResults["D"][peak[0]].append((["MI","MI","MI"], float(peak[1]), float(peak[2]), mass, massStdev))
+            self.manualAnalysisResults["D"][peak[0]].append((["MI","MI","MI", area], float(peak[1]), float(peak[2]), mass, massStdev))
     def add_ms_peaks(self, peaks):
         """This function is for peaks that were manually matched (alternately: manually selected, or ms) to a specific element.
            It will add the peaks to the "Done" section of the manualAnalysisResults dictionary."""
@@ -133,6 +144,49 @@ class ElementalAnalysisFrame(tk.Frame):
             wid = float(params[i+2])
             y = y + amp * np.exp( -((x - ctr)/wid)**2)
         return y
+    
+    def multiple_peak_and_background(self, peaks, background, x, params):
+        y = np.zeros_like(x)
+        leftCounter = 0
+        rightCounter = background.get_num_params()
+        
+        background.update_params(params[leftCounter:rightCounter])
+        y += background.get_ydata(x)
+        
+        for peak in peaks:
+            leftCounter = rightCounter
+            rightCounter = leftCounter + peak.get_num_params()
+            peak.update_params(params[leftCounter:rightCounter])
+            y += peak.get_ydata(x)
+            
+        return y
+    
+    def mpb_no_update(self, peaks, background, x):
+        y = np.zeros_like(x)
+        y += background.get_ydata(x)
+        for peak in peaks:
+            y += peak.get_ydata(x)
+        return y
+    def calculate_ROIs(self, centers, energies, cps):
+        for center in centers:
+            searchLeft = center
+            searchRight = center + 1
+            v1 = 25
+            v2 = .05
+            firstPass = True
+            while searchRight - searchLeft > 50 or firstPass:
+                while not (max(abs(max(cps[searchLeft-4:searchLeft]) - cps[searchLeft]), abs(min(cps[searchLeft-4:searchLeft]) - cps[searchLeft])) > max(cps[searchLeft]/v1, v2)):
+                      searchLeft -= 1
+                while not (max(abs(max(cps[searchRight:searchRight+4]) - cps[searchRight]), abs(min(cps[searchRight:searchRight+4]) - cps[searchRight])) > max(cps[searchRight]/v1, v2)):
+                      searchRight += 1
+                v1 /= 2
+                v2 *= 2
+                firstPass = False
+            while searchRight - searchLeft < 15:
+                searchLeft -= 1
+                searchRight += 1
+    def fit_region(self, regionGuess, energies, cps):
+        pass
     def do_peak_fitting(self,energies, cps, ROIs):
         """This function takes a lot of guesses at initial parameters, then uses a curve fitter to find the best-fitting peak equation"""
         peaks_to_return = []
@@ -151,7 +205,7 @@ class ElementalAnalysisFrame(tk.Frame):
             i=0
             while float(self.all_peaks_sens[i][1]) < lowerBound:
                 i+=1
-            while float(self.all_peaks_sens[i][1]) < upperBound:
+            while i < len(self.all_peaks_sens) and float(self.all_peaks_sens[i][1]) < upperBound:
                 peaksInRange.append(self.all_peaks_sens[i])
                 i+=1
                 
@@ -230,15 +284,15 @@ class ElementalAnalysisFrame(tk.Frame):
                 except RuntimeError:
                     try:
                         #fallack, use our guess for background line and give the algorithm less params to work with
-                        for i,j in enumerate(cpsToFit):
-                            cpsToFit[i] = j - (slope * enerToFit[i] + intercept)
-                        popt, pcov = curve_fit(self.multiple_gaussian, enerToFit, cpsToFit, p0=guessedParams[2:])
+                        popt, pcov = curve_fit(self.multiple_gaussian, enerToFit, tempData, p0=guessedParams[2:])
                         peaks_to_return.append([searchLeft, searchRight] + [slope, intercept] + list(popt))
                         pvar = list(np.diag(pcov))
                         if len(pvar) == 0:
                             pvar = [.1,.1,.1]#maybe change
                         variances.append(pvar)
                     except RuntimeError:
+                        peaks_to_return.append([searchLeft, searchRight])
+                        variances.append([])
                         #TODO: as a catch-all for special cases, just integrate under the data. Present the graph of the data(with maybe even more context) to the researcher and let them choose the bounds
                         """self.show_frame(ManualIntegrationPage)
                         self.frames[ManualIntegrationPage].populate_values(enerToFit,cpsToFit)"""
@@ -246,6 +300,9 @@ class ElementalAnalysisFrame(tk.Frame):
                         #TODO: figure out variance for this case
                         #TODO: figure out how to differentiate integral data from fit data in find_elements
                         pass
+            else:
+                peaks_to_return.append([searchLeft, searchRight])
+                variances.append([])
         """peaks_to_return = [[left bound, right bound, slope, intercept, ctr1, amp1, wid1...,ctrn,ampn,widn]]"""
         return peaks_to_return, variances
     
@@ -355,12 +412,12 @@ class ElementalAnalysisFrame(tk.Frame):
                 if potentialPredictions[peak][k][-1] != "N/A" and potentialPredictions[peak][k][-1] > ratio:
                     bestMatch = k
                     ratio = potentialPredictions[peak][k][-1]
-            if bestMatch.split("-")[0] in targets: #TODO: Handle case of different isotopes
-                finalPredictions[bestMatch].append((list(map(float, peak.split(","))), potentialPredictions[peak][bestMatch][0],potentialPredictions[peak][bestMatch][1],potentialPredictions[peak][bestMatch][2],potentialPredictions[peak][bestMatch][3]))
+            if bestMatch in targets: #TODO: Handle case of different isotopes
+                finalPredictions[bestMatch].append(([list(map(float, peak.split(",")))] + potentialPredictions[peak][bestMatch][0:4]))
         toDelete = []
         disregardedPeaks = dict()
         for k in finalPredictions.keys():
-            if k.split("-")[0] not in targets:
+            if k not in targets:
                 toDelete.append(k)
         for k in toDelete:
             del finalPredictions[k]
@@ -398,7 +455,6 @@ class ElementalAnalysisFrame(tk.Frame):
         newAnalysisResults = {"D":{},"ND":[],"V":[]} #same format as manualAnalysisResults
         for region, choice in manualChoices:
             if choice[0] == "MI":
-                #TODO: this is glitched lol, returns a SD that's way too high
                 i = 0
                 data = []
                 while energies[i] < choice[1] - 5:
@@ -421,9 +477,9 @@ class ElementalAnalysisFrame(tk.Frame):
                 mass = area/float(choice[3][2])
                 massStdev = areaStdev/float(choice[3][2])
                 if choice[3][0] not in newAnalysisResults["D"].keys():
-                    newAnalysisResults["D"][choice[3][0]] = [(["MI","MI","MI"], float(choice[3][1]), float(choice[3][2]), mass, massStdev)]
+                    newAnalysisResults["D"][choice[3][0]] = [(["MI","MI","MI", area], float(choice[3][1]), float(choice[3][2]), mass, massStdev)]
                 else:
-                    newAnalysisResults["D"][choice[3][0]].append((["MI","MI","MI"], float(choice[3][1]), float(choice[3][2]), mass, massStdev))
+                    newAnalysisResults["D"][choice[3][0]].append((["MI","MI","MI", area], float(choice[3][1]), float(choice[3][2]), mass, massStdev))
             else:
                 i = 0
                 while energies[i] < region[0]:
@@ -465,9 +521,9 @@ class ElementalAnalysisFrame(tk.Frame):
                                 mass = float(area) / float(p[3])
                                 massStd = float(stdev) / float(p[3])
                                 if p[0] in newAnalysisResults["D"].keys():
-                                    newAnalysisResults["D"][p[0]].append([[ctr, amp, wid], p[2], p[3], mass, massStd])
+                                    newAnalysisResults["D"][p[0]].append([[ctr, amp, wid, area], p[2], p[3], mass, massStd])
                                 else:
-                                    newAnalysisResults["D"][p[0]] = [[[ctr, amp, wid], p[2], p[3], mass, massStd]]
+                                    newAnalysisResults["D"][p[0]] = [[[ctr, amp, wid, area], p[2], p[3], mass, massStd]]
                                 break #I hate to do it but it makes sense
                 else:
                     newAnalysisResults["ND"] += list(popt[2:])
